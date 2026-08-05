@@ -73,9 +73,20 @@ export const startServer = (port: number = DEFAULT_PORT): Promise<NReplServer> =
     nrepl.server.listen(port, () => resolve(nrepl));
   });
 
+/**
+ * Evaluated code runs asynchronously outside of `handleEval`'s try/catch, so a
+ * rejected promise or a throw from a timer would otherwise terminate the whole
+ * server and every other session with it.
+ */
+export const guardAgainstEvalCrashes = (): void => {
+  process.on('unhandledRejection', (reason) => console.error('unhandled rejection:', reason));
+  process.on('uncaughtException', (err) => console.error('uncaught exception:', err));
+};
+
 const isMain = process.argv[1] !== undefined && import.meta.filename === process.argv[1];
 
 if (isMain) {
+  guardAgainstEvalCrashes();
   const port = Number(process.env.NREPL_PORT ?? DEFAULT_PORT);
   const { server } = await startServer(port);
   const address = server.address();

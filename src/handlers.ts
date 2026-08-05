@@ -16,6 +16,10 @@ const done = (msg: NReplMessage, extra: Partial<NReplResponse> = {}): NReplRespo
   ...extra,
 });
 
+/**
+ * Globals exposed to evaluated code. The host `process` is deliberately absent:
+ * `process.exit()` from a session would take the whole server down.
+ */
 const createSessionContext = (): vm.Context =>
   vm.createContext({
     console,
@@ -23,8 +27,12 @@ const createSessionContext = (): vm.Context =>
     clearTimeout,
     setInterval,
     clearInterval,
+    queueMicrotask,
+    structuredClone,
+    URL,
+    TextEncoder,
+    TextDecoder,
     Buffer,
-    process,
   });
 
 export const handleClone = (msg: NReplMessage, ctx: ServerContext): NReplResponse[] => {

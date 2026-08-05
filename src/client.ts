@@ -45,9 +45,14 @@ export const connect = (
     const socket = net.createConnection({ port, host });
     const pending = new Map<
       string,
-      { responses: NReplResponse[]; resolve: (r: NReplResponse[]) => void }
+      {
+        responses: NReplResponse[];
+        resolve: (r: NReplResponse[]) => void;
+        reject: (err: Error) => void;
+      }
     >();
     let buffered: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+    let closed = false;
 
     socket.on('data', (chunk: Buffer) => {
       buffered = Buffer.concat([buffered, chunk]);
@@ -69,14 +74,28 @@ export const connect = (
 
     socket.once('error', reject);
 
+    // Without this a request in flight when the server goes away would hang forever.
+    socket.on('close', () => {
+      closed = true;
+      const inFlight = [...pending.values()];
+      pending.clear();
+      inFlight.forEach((entry) =>
+        entry.reject(new Error('connection closed before the response was complete')),
+      );
+    });
+
     socket.once('connect', () => {
       socket.removeListener('error', reject);
       socket.on('error', (err) => console.error('client socket error:', err.message));
 
       const send: NReplClient['send'] = (msg) => {
         const id = msg.id ?? crypto.randomUUID();
-        return new Promise((resolveSend) => {
-          pending.set(id, { responses: [], resolve: resolveSend });
+        return new Promise((resolveSend, rejectSend) => {
+          if (closed) {
+            rejectSend(new Error('client is disconnected'));
+            return;
+          }
+          pending.set(id, { responses: [], resolve: resolveSend, reject: rejectSend });
           socket.write(encode(toBencodeDict({ ...msg, id })));
         });
       };
@@ -93,7 +112,12 @@ export const connect = (
         close: (session) => send({ op: 'close', session }),
         disconnect: () =>
           new Promise((resolveEnd) => {
-            socket.end(() => resolveEnd());
+            if (closed) {
+              resolveEnd();
+              return;
+            }
+            socket.once('close', () => resolveEnd());
+            socket.end();
           }),
       });
     });
@@ -128,12 +152,19 @@ const repl = async (port: number): Promise<void> => {
     for await (const line of rl) {
       const code = line.trim();
       if (code === ':quit' || code === ':exit') break;
-      if (code !== '') printResponses(await client.eval(code, session));
+      if (code !== '') {
+        try {
+          printResponses(await client.eval(code, session));
+        } catch (err) {
+          console.error(err instanceof Error ? err.message : String(err));
+          break;
+        }
+      }
       if (!closed) rl.prompt();
     }
   } finally {
     rl.close();
-    await client.close(session);
+    await client.close(session).catch(() => undefined);
     await client.disconnect();
   }
 };
