@@ -84,3 +84,7 @@ src/server.ts     TCP server, framing, socket writes
 src/client.ts     Promise-based client + interactive REPL
 test/             node:test suites (bencode, handlers, end-to-end)
 ```
+
+## License
+
+[MIT](LICENSE)
