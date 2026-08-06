@@ -7,9 +7,11 @@ and TypeScript input is erased with `node:module`'s `stripTypeScriptTypes`.
 
 ## Requirements
 
-Node.js >= 22.18 (native TypeScript execution + `stripTypeScriptTypes`). See `.nvmrc`.
+Node.js >= 22.18 (native TypeScript execution + `stripTypeScriptTypes`).
+The pinned version lives in `mise.toml` (Node.js 26).
 
 ```bash
+mise install      # installs the pinned Node.js toolchain
 npm install       # dev-only: typescript + @types/node
 ```
 
