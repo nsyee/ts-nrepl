@@ -4,6 +4,7 @@
   "description": "nREPL server and client implemented in TypeScript on Node.js",
   "type": "module",
   "private": true,
+  "license": "MIT",
   "engines": {
     "node": ">=22.18.0"
   },
