@@ -100,7 +100,9 @@ const connect = (): void => {
     if (typeof value.id !== 'string' || typeof value.code !== 'string') return;
     void run({ id: value.id, code: value.code }, socket);
   };
-  socket.onclose = () => {
+  socket.onclose = (event) => {
+    // Keep this in sync with SUPERSEDED_CLOSE_CODE in browser-bridge.ts.
+    if (event.code === 4000) return;
     window.setTimeout(connect, 1000);
   };
 };

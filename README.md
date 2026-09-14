@@ -77,10 +77,11 @@ NREPL_TARGET=browser npm start
 ```
 
 The PoC supports import-free single expressions and statement snippets, but not
-import statements. It supports one browser tab at a time, forwards console
-output only from the current evaluation, and does not preserve module state
-between evaluations. The WebSocket server is implemented in-house to keep the
-runtime dependency count at zero.
+import statements. It supports one browser tab at a time: the newest tab wins,
+older tabs are detached, and reloading an older tab can reclaim the bridge.
+Console output is forwarded only from the current evaluation, and module state
+does not persist between evaluations. The WebSocket server is implemented
+in-house to keep the runtime dependency count at zero.
 
 ## Protocol
 
