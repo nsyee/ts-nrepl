@@ -1,5 +1,6 @@
 import type vm from 'node:vm';
 import type { BencodeValue } from './bencode.ts';
+import type { WebSocketConnection } from './websocket.ts';
 
 export interface NReplMessage {
   id: string;
@@ -19,11 +20,35 @@ export interface NReplResponse {
   ops?: Record<string, BencodeValue>;
 }
 
-export interface ServerContext {
-  sessions: Map<string, vm.Context>;
+export interface EvalResult {
+  value?: string;
+  err?: string;
+  out?: string;
 }
 
-export const createServerContext = (): ServerContext => ({ sessions: new Map() });
+export interface PendingEval {
+  resolve: (r: EvalResult) => void;
+  timer: NodeJS.Timeout;
+}
+
+export interface BrowserBridge {
+  socket: WebSocketConnection | undefined;
+  pending: Map<string, PendingEval>;
+}
+
+export type EvalTarget = 'vm' | 'browser';
+
+export interface ServerContext {
+  sessions: Map<string, vm.Context>;
+  target: EvalTarget;
+  browser: BrowserBridge;
+}
+
+export const createServerContext = (target: EvalTarget = 'vm'): ServerContext => ({
+  sessions: new Map(),
+  target,
+  browser: { socket: undefined, pending: new Map() },
+});
 
 const asString = (value: BencodeValue | undefined): string | undefined =>
   typeof value === 'string' ? value : undefined;
