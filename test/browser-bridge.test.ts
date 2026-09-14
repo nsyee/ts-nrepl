@@ -19,7 +19,8 @@ const connectBrowser = (port: number, onRequest: (request: { id: string; code: s
       } catch {
         return;
       }
-      socket.send(JSON.stringify(onRequest(request)));
+      const response = onRequest(request);
+      if (response !== undefined) socket.send(JSON.stringify(response));
     };
   });
 
@@ -42,16 +43,25 @@ test('browser bridge routes values, errors, timeouts, and disconnects', async ()
   const server = await createBrowserWebSocketServer(ctx.browser, 0);
   const address = server.address();
   assert.ok(address !== null && typeof address === 'object');
+  const browserA = await connectBrowser(address.port, ({ id }) => ({ id, value: '"a"' }));
+  const browserAClosed = new Promise<number>((resolve) => {
+    browserA.addEventListener(
+      'close',
+      (event: Event) => resolve((event as CloseEvent).code),
+      { once: true },
+    );
+  });
   const browser = await connectBrowser(address.port, ({ id, code }) =>
     code === 'timeout'
       ? undefined
       : code === 'error'
         ? { id, err: 'ReferenceError: x' }
-        : { id, value: '"ok"' },
+        : { id, value: '"b"' },
   );
+  assert.equal(await browserAClosed, 4000);
 
   const value = await route({ id: 'value', op: 'eval', session, code: '1 + 1' });
-  assert.equal(value.find((response) => response.value)?.value, '"ok"');
+  assert.equal(value.find((response) => response.value)?.value, '"b"');
 
   const error = await route({ id: 'error', op: 'eval', session, code: 'error' });
   assert.deepEqual(error.find((response) => response.status)?.status, ['eval-error']);

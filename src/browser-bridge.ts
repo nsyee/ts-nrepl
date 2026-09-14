@@ -5,6 +5,7 @@ import { attachWebSocketServer } from './websocket.ts';
 
 export const EVAL_TIMEOUT_MS = 30_000;
 export const DEFAULT_WS_PORT = 7889;
+export const SUPERSEDED_CLOSE_CODE = 4000;
 
 export const evalInBrowser = (
   bridge: BrowserBridge,
@@ -28,8 +29,9 @@ export const evalInBrowser = (
 
 export const acceptBrowser = (bridge: BrowserBridge, conn: WebSocketConnection): void => {
   // This PoC supports a single tab; multi-tab routing is a future extension.
-  bridge.socket?.close();
+  const previous = bridge.socket;
   bridge.socket = conn;
+  previous?.close(SUPERSEDED_CLOSE_CODE, 'superseded by a newer tab');
   conn.onMessage((text) => {
     let message: unknown;
     try {

@@ -4,7 +4,7 @@ import type { Duplex } from 'node:stream';
 
 export interface WebSocketConnection {
   send(text: string): void;
-  close(): void;
+  close(code?: number, reason?: string): void;
   onMessage(cb: (text: string) => void): void;
   onClose(cb: () => void): void;
 }
@@ -50,10 +50,17 @@ class ServerWebSocketConnection implements WebSocketConnection {
     this.socket.write(encodeFrame(0x1, Buffer.from(text, 'utf8')));
   }
 
-  close(): void {
+  close(code?: number, reason?: string): void {
     if (this.closed) return;
     this.closed = true;
-    this.socket.write(encodeFrame(0x8, Buffer.alloc(0)), () => this.socket.end());
+    let payload = Buffer.alloc(0);
+    if (code !== undefined) {
+      const reasonPayload = Buffer.from(reason ?? '', 'utf8');
+      payload = Buffer.alloc(2 + reasonPayload.length);
+      payload.writeUInt16BE(code);
+      reasonPayload.copy(payload, 2);
+    }
+    this.socket.write(encodeFrame(0x8, payload), () => this.socket.end());
     this.fireClose();
   }
 
