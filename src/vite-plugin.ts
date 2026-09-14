@@ -1,8 +1,8 @@
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
-import { createBrowserWebSocketServer } from './browser-bridge.ts';
-import { createNReplServer } from './server.ts';
+import { createBrowserWebSocketServer, DEFAULT_WS_PORT } from './browser-bridge.ts';
+import { createNReplServer, DEFAULT_PORT } from './server.ts';
 import { createServerContext } from './types.ts';
 
 interface ViteDevServerLike {
@@ -32,11 +32,8 @@ export interface TsNreplPlugin {
   transformIndexHtml(html: string): string;
 }
 
-const DEFAULT_NREPL_PORT = 7888;
-const DEFAULT_WS_PORT = 7889;
-
 export const tsNrepl = (options: TsNreplPluginOptions = {}): TsNreplPlugin => {
-  const nreplPort = options.nreplPort ?? DEFAULT_NREPL_PORT;
+  const nreplPort = options.nreplPort ?? DEFAULT_PORT;
   const wsPort = options.wsPort ?? DEFAULT_WS_PORT;
   const wsHost = options.wsHost ?? 'localhost';
 
