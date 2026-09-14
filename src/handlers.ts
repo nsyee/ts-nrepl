@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import vm from 'node:vm';
 import { stripTypeScriptTypes } from 'node:module';
+import { evalInBrowser } from './browser-bridge.ts';
 import type { NReplMessage, NReplResponse, ServerContext } from './types.ts';
 
 /**
@@ -69,7 +70,10 @@ const formatError = (err: unknown): string => {
   return [header, ...frames].join('\n');
 };
 
-export const handleEval = (msg: NReplMessage, ctx: ServerContext): NReplResponse[] => {
+export const handleEval = async (
+  msg: NReplMessage,
+  ctx: ServerContext,
+): Promise<NReplResponse[]> => {
   const context = msg.session ? ctx.sessions.get(msg.session) : undefined;
   if (!context) {
     return [{ id: msg.id, session: msg.session, status: ['error', 'unknown-session', 'done'] }];
@@ -78,6 +82,25 @@ export const handleEval = (msg: NReplMessage, ctx: ServerContext): NReplResponse
 
   try {
     const jsCode = stripTypeScriptTypes(msg.code, { mode: 'strip' });
+    if (ctx.target === 'browser') {
+      const result = await evalInBrowser(ctx.browser, msg.id, jsCode);
+      const responses: NReplResponse[] = [];
+      if (result.out !== undefined) {
+        responses.push({ id: msg.id, session: msg.session, out: result.out });
+      }
+      if (result.value !== undefined) {
+        responses.push({ id: msg.id, session: msg.session, value: result.value });
+      } else if (result.err !== undefined) {
+        responses.push({
+          id: msg.id,
+          session: msg.session,
+          err: result.err,
+          status: ['eval-error'],
+        });
+      }
+      responses.push(done(msg));
+      return responses;
+    }
     const result = vm.runInContext(jsCode, context, { filename: EVAL_FILENAME });
     return [
       { id: msg.id, session: msg.session, value: stringify(result) },
@@ -103,17 +126,17 @@ export const handleDescribe = (msg: NReplMessage): NReplResponse[] => [
 
 export const routeMessage =
   (ctx: ServerContext) =>
-  (msg: NReplMessage): NReplResponse[] => {
+  (msg: NReplMessage): Promise<NReplResponse[]> => {
     switch (msg.op) {
       case 'clone':
-        return handleClone(msg, ctx);
+        return Promise.resolve(handleClone(msg, ctx));
       case 'eval':
         return handleEval(msg, ctx);
       case 'close':
-        return handleClose(msg, ctx);
+        return Promise.resolve(handleClose(msg, ctx));
       case 'describe':
-        return handleDescribe(msg);
+        return Promise.resolve(handleDescribe(msg));
       default:
-        return [done(msg, { status: ['error', 'unknown-op', 'done'] })];
+        return Promise.resolve([done(msg, { status: ['error', 'unknown-op', 'done'] })]);
     }
   };

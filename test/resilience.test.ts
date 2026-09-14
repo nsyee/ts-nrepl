@@ -8,12 +8,12 @@ import { routeMessage } from '../src/handlers.ts';
 import { createServerContext } from '../src/types.ts';
 import { connect } from '../src/client.ts';
 
-test('the sandbox does not expose the host process object', () => {
+test('the sandbox does not expose the host process object', async () => {
   const route = routeMessage(createServerContext());
-  const session = route({ id: '1', op: 'clone' })[0]?.['new-session'];
+  const session = (await route({ id: '1', op: 'clone' }))[0]?.['new-session'];
   assert.ok(session);
 
-  const [res] = route({ id: '2', op: 'eval', session, code: 'typeof process' });
+  const [res] = await route({ id: '2', op: 'eval', session, code: 'typeof process' });
   assert.equal(res?.value, '"undefined"');
 });
 
