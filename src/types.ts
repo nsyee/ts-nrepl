@@ -41,12 +41,17 @@ export type EvalTarget = 'vm' | 'browser';
 export interface ServerContext {
   sessions: Map<string, vm.Context>;
   target: EvalTarget;
+  projectRoot: string;
   browser: BrowserBridge;
 }
 
-export const createServerContext = (target: EvalTarget = 'vm'): ServerContext => ({
+export const createServerContext = (
+  target: EvalTarget = 'vm',
+  projectRoot: string = process.cwd(),
+): ServerContext => ({
   sessions: new Map(),
   target,
+  projectRoot,
   browser: { socket: undefined, pending: new Map() },
 });
 
