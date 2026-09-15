@@ -93,6 +93,45 @@ Console output is forwarded only from the current evaluation, and module state
 does not persist between evaluations. The WebSocket server is implemented
 in-house to keep the runtime dependency count at zero.
 
+## LSP server
+
+`src/lsp-server.ts` is a minimal Language Server (JSON-RPC over stdio, no runtime
+dependencies) that forwards selected TypeScript/JavaScript to a running nREPL server and
+reports the result back to the editor using standard LSP features only. Type stripping
+happens on the nREPL side, so the selection is sent verbatim.
+
+```sh
+npm run lsp                        # or
+node src/lsp-server.ts --stdio     # `--stdio` is accepted and ignored
+```
+
+`initializationOptions`:
+
+```jsonc
+{
+  "host": "127.0.0.1",   // optional, default 127.0.0.1
+  "port": 7888,          // optional, default 7888
+  "autoConnect": true    // optional; connect during `initialize` when host and port are set
+}
+```
+
+Capabilities and behaviour:
+
+| Feature | Details |
+| --- | --- |
+| `workspace/executeCommand` | `nrepl/connect` (`[{host?, port?}]`), `nrepl/disconnect`, `nrepl/eval` (`[{uri, range, code}]`) |
+| `textDocument/codeAction` | For a non-empty selection: **Evaluate form (nREPL)** bound to `nrepl/eval`; when disconnected: **Connect to nREPL** bound to `nrepl/connect` |
+| Results | `value` and `out` are shown via `window/showMessage` (Info); `err` (or a dropped connection) is published as an Error diagnostic on the evaluated range via `textDocument/publishDiagnostics`, and cleared on the next successful evaluation |
+| `shutdown` / `exit` | Closes the nREPL session and disconnects |
+
+The server keeps a single nREPL connection and session. The document text is tracked via
+`textDocument/didOpen` / `didChange` so the code action can fill in the selected code.
+
+To use it from Zed a separate extension is required (`nsyee/zed-nrepl`, Rust compiled to
+WASM, launching this server through `language_server_command`). Because LSP has no
+Webview-like panel, a Calva-style output view or interactive prompt is not possible; the
+experience is limited to messages and diagnostics.
+
 ## Protocol
 
 TCP transport, Bencode encoding, every message is a dictionary.
@@ -133,6 +172,7 @@ src/types.ts      Shared types and conversions
 src/handlers.ts   clone / eval / close / describe + routing
 src/server.ts     TCP server, framing, socket writes
 src/client.ts     Promise-based client + interactive REPL
+src/lsp-server.ts Language Server (JSON-RPC over stdio) bridging editors to nREPL
 src/websocket.ts  Dependency-free RFC 6455 server-side WebSocket framing
 src/browser-bridge.ts  Browser evaluation bridge and WebSocket server
 src/browser-client.ts   Browser-side evaluator injected by the Vite plugin
