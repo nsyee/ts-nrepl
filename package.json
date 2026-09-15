@@ -9,9 +9,9 @@
     "node": ">=22.18.0"
   },
   "scripts": {
-    "start": "node src/server.ts",
+    "start": "node --experimental-vm-modules src/server.ts",
     "client": "node src/client.ts",
-    "test": "node --test test/*.test.ts",
+    "test": "node --experimental-vm-modules --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

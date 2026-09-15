@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { routeMessage } from '../src/handlers.ts';
 import { createServerContext } from '../src/types.ts';
 
@@ -28,12 +29,30 @@ test('eval returns the value then done', async () => {
   ]);
 });
 
-test('eval strips TypeScript types and keeps session state', async () => {
-  const route = routeMessage(createServerContext());
+test('eval strips TypeScript types', async () => {
+  const route = routeMessage(
+    createServerContext('vm', path.resolve(import.meta.dirname, '..')),
+  );
   const session = await cloneSession(route);
-  await route({ id: '2', op: 'eval', session, code: 'const x: number = 41;' });
-  const [value] = await route({ id: '3', op: 'eval', session, code: 'x + 1' });
+  const [value] = await route({
+    id: '2',
+    op: 'eval',
+    session,
+    code: '((x: number) => x + 1)(41)',
+  });
   assert.equal(value?.value, '42');
+});
+
+test('bindings do not persist between evals', async () => {
+  const route = routeMessage(
+    createServerContext('vm', path.resolve(import.meta.dirname, '..')),
+  );
+  const session = await cloneSession(route);
+  await route({ id: '2', op: 'eval', session, code: 'const x = 41;' });
+  const [err, done] = await route({ id: '3', op: 'eval', session, code: 'x' });
+  assert.match(err?.err ?? '', /x is not defined/);
+  assert.deepEqual(err?.status, ['eval-error']);
+  assert.deepEqual(done?.status, ['done']);
 });
 
 test('sessions are isolated from each other', async () => {
@@ -44,6 +63,89 @@ test('sessions are isolated from each other', async () => {
   const [err] = await route({ id: '3', op: 'eval', session: b, code: 'shared' });
   assert.match(err?.err ?? '', /shared is not defined/);
   assert.deepEqual(err?.status, ['eval-error']);
+});
+
+test('VM eval supports node builtin imports', async () => {
+  const route = routeMessage(
+    createServerContext('vm', path.resolve(import.meta.dirname, '..')),
+  );
+  const session = await cloneSession(route);
+  const [value] = await route({
+    id: '2',
+    op: 'eval',
+    session,
+    code: "import os from 'node:os'; export default os.EOL",
+  });
+  assert.equal(value?.value, JSON.stringify('\n'));
+});
+
+test('VM eval resolves bare specifiers from the project root', async () => {
+  const route = routeMessage(
+    createServerContext('vm', path.resolve(import.meta.dirname, '..')),
+  );
+  const session = await cloneSession(route);
+  const [value] = await route({
+    id: '2',
+    op: 'eval',
+    session,
+    code: "import ts from 'typescript'; export default typeof ts.version",
+  });
+  assert.equal(value?.value, '"string"');
+});
+
+test('VM eval supports top-level await', async () => {
+  const route = routeMessage(
+    createServerContext('vm', path.resolve(import.meta.dirname, '..')),
+  );
+  const session = await cloneSession(route);
+  const [value] = await route({
+    id: '2',
+    op: 'eval',
+    session,
+    code: 'export default await Promise.resolve(42)',
+  });
+  assert.equal(value?.value, '42');
+});
+
+test('VM eval supports dynamic imports', async () => {
+  const route = routeMessage(
+    createServerContext('vm', path.resolve(import.meta.dirname, '..')),
+  );
+  const session = await cloneSession(route);
+  const [value] = await route({
+    id: '2',
+    op: 'eval',
+    session,
+    code: "const os = await import('node:os'); export default typeof os.EOL",
+  });
+  assert.equal(value?.value, '"string"');
+});
+
+test('VM eval reports missing modules with eval-error followed by done', async () => {
+  const route = routeMessage(
+    createServerContext('vm', path.resolve(import.meta.dirname, '..')),
+  );
+  const session = await cloneSession(route);
+  const [err, done] = await route({
+    id: '2',
+    op: 'eval',
+    session,
+    code: "import x from 'no-such-pkg'; x",
+  });
+  assert.match(err?.err ?? '', /no-such-pkg/);
+  assert.deepEqual(err?.status, ['eval-error']);
+  assert.deepEqual(done?.status, ['done']);
+});
+
+test('VM eval reports syntax errors', async () => {
+  const route = routeMessage(
+    createServerContext('vm', path.resolve(import.meta.dirname, '..')),
+  );
+  const session = await cloneSession(route);
+  const [err, done] = await route({ id: '2', op: 'eval', session, code: '1 +' });
+  assert.deepEqual(err?.status, ['eval-error']);
+  assert.match(err?.err ?? '', /SyntaxError/);
+  assert.deepEqual(done?.status, ['done']);
 });
 
 test('eval reports errors with eval-error followed by done', async () => {

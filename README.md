@@ -18,7 +18,7 @@ npm install       # dev-only: typescript + @types/node
 ## Usage
 
 ```bash
-npm start                 # server on port 7888 (override with NREPL_PORT)
+npm start                 # VM server on port 7888 (override with NREPL_PORT)
 npm run client            # interactive REPL client, `:quit` to exit
 npm test                  # node:test suite
 npm run typecheck         # tsc --noEmit
@@ -30,6 +30,16 @@ nrepl> const add = (a: number, b: number): number => a + b
 nrepl> add(1, 2)
 => 3
 ```
+
+The VM target evaluates each request as an independent ES module. It supports
+`import` statements for `node:` builtins and npm bare specifiers, and supports
+top-level await and dynamic imports. VM evaluation requires Node's
+`--experimental-vm-modules` flag; `npm start` includes it. Set
+`NREPL_PROJECT_ROOT` to choose the project root used to resolve imports (the
+default is the current working directory). Bare specifiers use require-style
+conditions through `createRequire`, so ESM-only packages that export only
+`import` conditions may not resolve. This PoC does not persist session state:
+each eval has an independent module scope.
 
 Programmatic client:
 
@@ -76,8 +86,8 @@ Standalone mode starts both transports without Vite:
 NREPL_TARGET=browser npm start
 ```
 
-The PoC supports import-free single expressions and statement snippets, but not
-import statements. It supports one browser tab at a time: the newest tab wins,
+The browser PoC supports import-free single expressions and statement snippets,
+but not import statements. It supports one browser tab at a time: the newest tab wins,
 older tabs are detached, and reloading an older tab can reclaim the bridge.
 Console output is forwarded only from the current evaluation, and module state
 does not persist between evaluations. The WebSocket server is implemented
@@ -113,8 +123,7 @@ Effects are pushed to the edges:
 Because a bencoded message can be split across TCP packets, the server and client buffer
 incoming bytes and use `decodeAll`, which returns complete values plus the remainder.
 
-Each session is a separate `vm` context, so bindings persist per session and are isolated
-between sessions.
+Each session is a separate `vm` context, so evaluations are isolated between sessions.
 
 ## Layout
 

@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
+import path from 'node:path';
 import vm from 'node:vm';
-import { stripTypeScriptTypes } from 'node:module';
+import { createRequire, stripTypeScriptTypes } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { evalInBrowser } from './browser-bridge.ts';
 import type { NReplMessage, NReplResponse, ServerContext } from './types.ts';
 
@@ -58,6 +60,171 @@ const stringify = (result: unknown): string => {
 
 const EVAL_FILENAME = 'nrepl-eval.ts';
 
+const resolveSpecifier = (specifier: string, projectRoot: string): string => {
+  if (specifier.startsWith('node:')) return specifier;
+  const resolved = createRequire(path.join(projectRoot, 'noop.js')).resolve(specifier);
+  return resolved.startsWith('node:') || !path.isAbsolute(resolved)
+    ? resolved
+    : pathToFileURL(resolved).href;
+};
+
+const linkModule =
+  (context: vm.Context, projectRoot: string) =>
+  async (specifier: string): Promise<vm.Module> => {
+    const ns: Record<string, unknown> = await import(resolveSpecifier(specifier, projectRoot));
+    const keys = Object.keys(ns);
+    return new vm.SyntheticModule(
+      keys,
+      function () {
+        for (const key of keys) this.setExport(key, ns[key]);
+      },
+      { context },
+    );
+  };
+
+const dynamicLinkModule =
+  (context: vm.Context, projectRoot: string) =>
+  async (specifier: string): Promise<vm.Module> => {
+    const module = await linkModule(context, projectRoot)(specifier);
+    await module.link(() => {
+      throw new Error('Synthetic modules cannot import dependencies');
+    });
+    await module.evaluate();
+    return module;
+  };
+
+const createModule = async (
+  source: string,
+  context: vm.Context,
+  projectRoot: string,
+): Promise<vm.SourceTextModule> => {
+  const link = linkModule(context, projectRoot);
+  const dynamicLink = dynamicLinkModule(context, projectRoot);
+  let module: vm.SourceTextModule;
+  try {
+    module = new vm.SourceTextModule(source, {
+      context,
+      identifier: EVAL_FILENAME,
+      importModuleDynamically: dynamicLink,
+    });
+  } catch (err) {
+    throw new SyntaxError(String(err).replace(/^SyntaxError:\s*/, ''));
+  }
+  await module.link(link);
+  await module.evaluate();
+  return module;
+};
+
+const trailingExpression = (
+  source: string,
+): { prefix: string; expression: string } | undefined => {
+  const semicolons: number[] = [];
+  let quote: "'" | '"' | '`' | undefined;
+  let escaped = false;
+  let lineComment = false;
+  let blockComment = false;
+  let parentheses = 0;
+  let brackets = 0;
+  let braces = 0;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    const next = source[index + 1];
+    if (lineComment) {
+      if (character === '\n') lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (character === '*' && next === '/') {
+        blockComment = false;
+        index += 1;
+      }
+      continue;
+    }
+    if (quote !== undefined) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+    if (character === '/' && next === '/') {
+      lineComment = true;
+      index += 1;
+      continue;
+    }
+    if (character === '/' && next === '*') {
+      blockComment = true;
+      index += 1;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === '`') {
+      quote = character;
+      continue;
+    }
+    if (character === '(') parentheses += 1;
+    else if (character === ')') parentheses -= 1;
+    else if (character === '[') brackets += 1;
+    else if (character === ']') brackets -= 1;
+    else if (character === '{') braces += 1;
+    else if (character === '}') braces -= 1;
+    else if (character === ';' && parentheses === 0 && brackets === 0 && braces === 0) {
+      semicolons.push(index);
+    }
+  }
+
+  for (let index = semicolons.length - 1; index >= 0; index -= 1) {
+    const semicolon = semicolons[index];
+    const expression = source.slice(semicolon + 1).trim();
+    if (expression.length === 0) continue;
+    if (
+      /^(?:async\s+function|break|class|const|continue|debugger|do|export|for|function|if|import|let|return|switch|throw|try|var|while)\b/.test(
+        expression,
+      )
+    ) {
+      return undefined;
+    }
+    return { prefix: source.slice(0, semicolon + 1), expression };
+  }
+  return undefined;
+};
+
+/**
+ * Evaluate as an ES module. First try wrapping as `export default (code)` to capture the
+ * value of a single expression; if that is a SyntaxError, evaluate the code as statements
+ * and return its default export, if any (same fallback as browser-client.ts `evaluate`).
+ */
+const evalAsModule = async (
+  jsCode: string,
+  context: vm.Context,
+  projectRoot: string,
+): Promise<unknown> => {
+  try {
+    const module = await createModule(`export default (\n${jsCode}\n);`, context, projectRoot);
+    return (module.namespace as { default: unknown }).default;
+  } catch (err) {
+    if (!(err instanceof SyntaxError)) throw err;
+  }
+  const expression = trailingExpression(jsCode);
+  if (expression !== undefined) {
+    try {
+      const module = await createModule(
+        `export default (await (async () => {\n${expression.prefix}\nreturn await (${expression.expression});\n})());`,
+        context,
+        projectRoot,
+      );
+      return (module.namespace as { default?: unknown }).default;
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) throw err;
+    }
+  }
+  const module = await createModule(jsCode, context, projectRoot);
+  return (module.namespace as { default?: unknown }).default;
+};
+
 /** Report the error plus only the stack frames belonging to evaluated code. */
 const formatError = (err: unknown): string => {
   if (!(err instanceof Error)) return String(err);
@@ -101,7 +268,7 @@ export const handleEval = async (
       responses.push(done(msg));
       return responses;
     }
-    const result = vm.runInContext(jsCode, context, { filename: EVAL_FILENAME });
+    const result = await evalAsModule(jsCode, context, ctx.projectRoot);
     return [
       { id: msg.id, session: msg.session, value: stringify(result) },
       done(msg),
