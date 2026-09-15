@@ -87,7 +87,7 @@ const dynamicLinkModule =
   async (specifier: string): Promise<vm.Module> => {
     const module = await linkModule(context, projectRoot)(specifier);
     await module.link(() => {
-      throw new Error('Synthetic modules cannot import dependencies');
+      throw new Error('unreachable: synthetic modules have no dependencies');
     });
     await module.evaluate();
     return module;
@@ -108,88 +108,23 @@ const createModule = async (
       importModuleDynamically: dynamicLink,
     });
   } catch (err) {
-    throw new SyntaxError(String(err).replace(/^SyntaxError:\s*/, ''));
+    // The constructor's SyntaxError comes from the sandbox realm, so host instanceof SyntaxError fails.
+    if (err instanceof Error && err.name === 'SyntaxError') throw new SyntaxError(err.message);
+    if (
+      typeof err === 'object' &&
+      err !== null &&
+      'name' in err &&
+      err.name === 'SyntaxError' &&
+      'message' in err &&
+      typeof err.message === 'string'
+    ) {
+      throw new SyntaxError(err.message);
+    }
+    throw err;
   }
   await module.link(link);
   await module.evaluate();
   return module;
-};
-
-const trailingExpression = (
-  source: string,
-): { prefix: string; expression: string } | undefined => {
-  const semicolons: number[] = [];
-  let quote: "'" | '"' | '`' | undefined;
-  let escaped = false;
-  let lineComment = false;
-  let blockComment = false;
-  let parentheses = 0;
-  let brackets = 0;
-  let braces = 0;
-
-  for (let index = 0; index < source.length; index += 1) {
-    const character = source[index];
-    const next = source[index + 1];
-    if (lineComment) {
-      if (character === '\n') lineComment = false;
-      continue;
-    }
-    if (blockComment) {
-      if (character === '*' && next === '/') {
-        blockComment = false;
-        index += 1;
-      }
-      continue;
-    }
-    if (quote !== undefined) {
-      if (escaped) {
-        escaped = false;
-      } else if (character === '\\') {
-        escaped = true;
-      } else if (character === quote) {
-        quote = undefined;
-      }
-      continue;
-    }
-    if (character === '/' && next === '/') {
-      lineComment = true;
-      index += 1;
-      continue;
-    }
-    if (character === '/' && next === '*') {
-      blockComment = true;
-      index += 1;
-      continue;
-    }
-    if (character === "'" || character === '"' || character === '`') {
-      quote = character;
-      continue;
-    }
-    if (character === '(') parentheses += 1;
-    else if (character === ')') parentheses -= 1;
-    else if (character === '[') brackets += 1;
-    else if (character === ']') brackets -= 1;
-    else if (character === '{') braces += 1;
-    else if (character === '}') braces -= 1;
-    else if (character === ';' && parentheses === 0 && brackets === 0 && braces === 0) {
-      semicolons.push(index);
-    }
-  }
-
-  for (let index = semicolons.length - 1; index >= 0; index -= 1) {
-    const semicolon = semicolons[index];
-    const expression = source.slice(semicolon + 1).trim();
-    if (expression.length === 0) continue;
-    if (
-      /^(?:async\s+function|break|class|const|continue|debugger|do|export|for|function|if|import|let|return|switch|throw|try|var|while)\b/.test(
-        expression,
-      )
-    ) {
-      return undefined;
-    }
-    return { prefix: source.slice(0, semicolon + 1), expression };
-  }
-  return undefined;
 };
 
 /**
@@ -207,19 +142,6 @@ const evalAsModule = async (
     return (module.namespace as { default: unknown }).default;
   } catch (err) {
     if (!(err instanceof SyntaxError)) throw err;
-  }
-  const expression = trailingExpression(jsCode);
-  if (expression !== undefined) {
-    try {
-      const module = await createModule(
-        `export default (await (async () => {\n${expression.prefix}\nreturn await (${expression.expression});\n})());`,
-        context,
-        projectRoot,
-      );
-      return (module.namespace as { default?: unknown }).default;
-    } catch (err) {
-      if (!(err instanceof SyntaxError)) throw err;
-    }
   }
   const module = await createModule(jsCode, context, projectRoot);
   return (module.namespace as { default?: unknown }).default;
