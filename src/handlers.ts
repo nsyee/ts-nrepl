@@ -108,8 +108,7 @@ const createModule = async (
       importModuleDynamically: dynamicLink,
     });
   } catch (err) {
-    // The constructor's SyntaxError comes from the sandbox realm, so host instanceof SyntaxError fails.
-    if (err instanceof Error && err.name === 'SyntaxError') throw new SyntaxError(err.message);
+    // The constructor's SyntaxError comes from the sandbox realm, so a host `instanceof` fails.
     if (
       typeof err === 'object' &&
       err !== null &&
