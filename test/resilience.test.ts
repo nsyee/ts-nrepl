@@ -40,7 +40,7 @@ test('pending requests reject when the connection drops', async () => {
 });
 
 test('async errors in evaluated code do not kill the server process', async () => {
-  const child = spawn(process.execPath, ['src/server.ts'], {
+  const child = spawn(process.execPath, ['--experimental-vm-modules', 'src/server.ts'], {
     env: { ...process.env, NREPL_PORT: '0' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
+import path from 'node:path';
 import vm from 'node:vm';
-import { stripTypeScriptTypes } from 'node:module';
+import { createRequire, stripTypeScriptTypes } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { evalInBrowser } from './browser-bridge.ts';
 import type { NReplMessage, NReplResponse, ServerContext } from './types.ts';
 
@@ -58,6 +60,92 @@ const stringify = (result: unknown): string => {
 
 const EVAL_FILENAME = 'nrepl-eval.ts';
 
+const resolveSpecifier = (specifier: string, projectRoot: string): string => {
+  if (specifier.startsWith('node:')) return specifier;
+  const resolved = createRequire(path.join(projectRoot, 'noop.js')).resolve(specifier);
+  return resolved.startsWith('node:') || !path.isAbsolute(resolved)
+    ? resolved
+    : pathToFileURL(resolved).href;
+};
+
+const linkModule =
+  (context: vm.Context, projectRoot: string) =>
+  async (specifier: string): Promise<vm.Module> => {
+    const ns: Record<string, unknown> = await import(resolveSpecifier(specifier, projectRoot));
+    const keys = Object.keys(ns);
+    return new vm.SyntheticModule(
+      keys,
+      function () {
+        for (const key of keys) this.setExport(key, ns[key]);
+      },
+      { context },
+    );
+  };
+
+const dynamicLinkModule =
+  (context: vm.Context, projectRoot: string) =>
+  async (specifier: string): Promise<vm.Module> => {
+    const module = await linkModule(context, projectRoot)(specifier);
+    await module.link(() => {
+      throw new Error('unreachable: synthetic modules have no dependencies');
+    });
+    await module.evaluate();
+    return module;
+  };
+
+const createModule = async (
+  source: string,
+  context: vm.Context,
+  projectRoot: string,
+): Promise<vm.SourceTextModule> => {
+  const link = linkModule(context, projectRoot);
+  const dynamicLink = dynamicLinkModule(context, projectRoot);
+  let module: vm.SourceTextModule;
+  try {
+    module = new vm.SourceTextModule(source, {
+      context,
+      identifier: EVAL_FILENAME,
+      importModuleDynamically: dynamicLink,
+    });
+  } catch (err) {
+    // The constructor's SyntaxError comes from the sandbox realm, so a host `instanceof` fails.
+    if (
+      typeof err === 'object' &&
+      err !== null &&
+      'name' in err &&
+      err.name === 'SyntaxError' &&
+      'message' in err &&
+      typeof err.message === 'string'
+    ) {
+      throw new SyntaxError(err.message);
+    }
+    throw err;
+  }
+  await module.link(link);
+  await module.evaluate();
+  return module;
+};
+
+/**
+ * Evaluate as an ES module. First try wrapping as `export default (code)` to capture the
+ * value of a single expression; if that is a SyntaxError, evaluate the code as statements
+ * and return its default export, if any (same fallback as browser-client.ts `evaluate`).
+ */
+const evalAsModule = async (
+  jsCode: string,
+  context: vm.Context,
+  projectRoot: string,
+): Promise<unknown> => {
+  try {
+    const module = await createModule(`export default (\n${jsCode}\n);`, context, projectRoot);
+    return (module.namespace as { default: unknown }).default;
+  } catch (err) {
+    if (!(err instanceof SyntaxError)) throw err;
+  }
+  const module = await createModule(jsCode, context, projectRoot);
+  return (module.namespace as { default?: unknown }).default;
+};
+
 /** Report the error plus only the stack frames belonging to evaluated code. */
 const formatError = (err: unknown): string => {
   if (!(err instanceof Error)) return String(err);
@@ -101,7 +189,7 @@ export const handleEval = async (
       responses.push(done(msg));
       return responses;
     }
-    const result = vm.runInContext(jsCode, context, { filename: EVAL_FILENAME });
+    const result = await evalAsModule(jsCode, context, ctx.projectRoot);
     return [
       { id: msg.id, session: msg.session, value: stringify(result) },
       done(msg),

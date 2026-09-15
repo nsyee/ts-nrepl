@@ -96,7 +96,8 @@ if (isMain) {
   guardAgainstEvalCrashes();
   const port = Number(process.env.NREPL_PORT ?? DEFAULT_PORT);
   const target = process.env.NREPL_TARGET === 'browser' ? 'browser' : 'vm';
-  const context = createServerContext(target);
+  const projectRoot = process.env.NREPL_PROJECT_ROOT ?? process.cwd();
+  const context = createServerContext(target, projectRoot);
   const { server } = await startServer(port, context);
   const address = server.address();
   const boundPort = typeof address === 'object' && address !== null ? address.port : port;

@@ -23,7 +23,10 @@ test('client clones, evaluates and closes over TCP', async () => {
     const session = await client.clone();
     assert.match(session, /^[0-9a-f-]{36}$/);
 
-    const responses = await client.eval('const greet = (n: string): string => `hi ${n}`; greet("nrepl")', session);
+    const responses = await client.eval(
+      'const greet = (n: string): string => `hi ${n}`; export default greet("nrepl")',
+      session,
+    );
     assert.equal(responses.find((r) => r.value !== undefined)?.value, '"hi nrepl"');
     assert.ok(responses.at(-1)?.status?.includes('done'));
 
